@@ -39,6 +39,12 @@ body{padding:calc(env(safe-area-inset-top) + 14px) 14px calc(env(safe-area-inset
 header{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}
 h1{font-size:21px;font-weight:600;letter-spacing:-.02em;margin:0}
 header p{margin:0;font-size:13px;color:var(--ink-3)}
+.tabs{display:flex;margin-bottom:8px}
+#tab{flex:1;font-size:15px;padding:9px 10px}
+.tacts{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:15px}
+.tacts button{flex:1;min-width:78px;height:34px;border-radius:8px;
+  border:1px solid var(--rule-2);background:var(--card);font-size:13px}
+#tdel{color:var(--danger)}
 .bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;color:var(--ink-2)}
 select,input,button{font:inherit;color:inherit}
 select{background:var(--card);border:1px solid var(--rule-2);border-radius:8px;padding:5px 6px;font-size:13px}
@@ -87,6 +93,11 @@ select{background:var(--card);border:1px solid var(--rule-2);border-radius:8px;p
 .sheet.on{transform:translateY(0)}
 .sheet .in{max-width:560px;margin:0 auto}
 .sheet h2{font-size:13px;font-weight:500;color:var(--ink-2);margin:0 0 10px}
+#ask{z-index:3}
+#scrim2{z-index:2}
+#askv{width:100%;background:var(--paper);border:1px solid var(--rule-2);border-radius:9px;padding:11px 12px;font-size:16px}
+#askv.off{display:none}
+#asko{background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:500}
 #nm{width:100%;background:var(--paper);border:1px solid var(--rule-2);border-radius:9px;padding:11px 12px;font-size:16px}
 #nm:focus{outline:2px solid var(--mark);outline-offset:-1px}
 #err{margin:7px 2px 0;font-size:13px;color:var(--danger);min-height:1px}
@@ -120,6 +131,16 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--mark);outline-
     <p id="cnt"></p>
   </header>
 
+  <div class="tabs">
+    <select id="tab" aria-label="시간표 선택"></select>
+  </div>
+  <div class="tacts">
+    <button id="tnew">새 시간표</button>
+    <button id="tren">이름 변경</button>
+    <button id="tdup">시간표 복제</button>
+    <button id="tdel">삭제</button>
+  </div>
+
   <div class="bar">
     <label for="h0">표시 시간</label>
     <select id="h0" aria-label="시작 시각"></select>
@@ -138,6 +159,16 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--mark);outline-
 </div>
 
 <div class="scrim" id="scrim"></div>
+<div class="scrim" id="scrim2"></div>
+<div class="sheet" id="ask" role="dialog" aria-modal="true" aria-label="입력">
+  <div class="in">
+    <h2 id="askt">이름</h2>
+    <input id="askv" type="text" enterkeyhint="done" autocomplete="off">
+    <div class="acts" style="margin-top:14px">
+      <button id="askc">취소</button><button id="asko">확인</button>
+    </div>
+  </div>
+</div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="블록 편집">
   <div class="in">
     <h2 id="ttl">블록</h2>
@@ -161,13 +192,30 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--mark);outline-
 (function(){
 "use strict";
 var DAYS=["월","화","수","목","금","토","일"],SLOT=22,KEY="timetable.v1",HOLD=320,TOL=8;
-var S={h0:8,h1:22,seq:0,blocks:[]},mem=null;
+function blank(name){return {id:"t"+(++seedT),name:name,h0:8,h1:22,blocks:[]}}
+var seedT=0;
+var S={v:2,seq:0,cur:null,tabs:[]},mem=null;
+function T(){
+  for(var i=0;i<S.tabs.length;i++)if(S.tabs[i].id===S.cur)return S.tabs[i];
+  S.cur=S.tabs[0].id;return S.tabs[0];
+}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){mem=S}}
 function load(){
-  try{var r=localStorage.getItem(KEY);if(r)S=JSON.parse(r)}catch(e){if(mem)S=mem}
-  S.blocks.forEach(function(b){if(!b.g)b.g=b.id});
+  var r=null,o=null;
+  try{r=localStorage.getItem(KEY)}catch(e){}
+  if(r){try{o=JSON.parse(r)}catch(e){o=null}}
+  if(!o&&mem)o=mem;
+  if(o&&o.tabs&&o.tabs.length)S=o;
+  else if(o&&o.blocks)S={v:2,seq:o.seq||0,cur:"t1",
+    tabs:[{id:"t1",name:"내 시간표",h0:o.h0||8,h1:o.h1||22,blocks:o.blocks}]};
+  S.tabs.forEach(function(t){
+    var n=+String(t.id).replace(/\D/g,"");if(n>seedT)seedT=n;
+    t.blocks.forEach(function(b){if(!b.g)b.g=b.id});
+  });
+  if(!S.tabs.length)S.tabs.push(blank("내 시간표"));
+  if(!S.cur)S.cur=S.tabs[0].id;
 }
-function kin(b){return S.blocks.filter(function(x){return x.g===b.g})}
+function kin(b){return T().blocks.filter(function(x){return x.g===b.g})}
 function sync(b,fn){kin(b).forEach(fn)}
 
 var area=document.getElementById("area"),lines=document.getElementById("lines"),
@@ -180,13 +228,81 @@ var area=document.getElementById("area"),lines=document.getElementById("lines"),
 var N=0,cur=null,drag=null,press=null,lastColor=0;
 
 function clamp(v,a,b){return v<a?a:v>b?b:v}
-function slots(){return (S.h1-S.h0)*2}
-function label(i){var m=S.h0*60+i*30;return Math.floor(m/60)+":"+(m%60?"30":"00")}
+function slots(){return (T().h1-T().h0)*2}
+function label(i){var m=T().h0*60+i*30;return Math.floor(m/60)+":"+(m%60?"30":"00")}
 function pad(v){return v<10?"0"+v:""+v}
 function span(n){return pad(Math.floor(n/2))+":"+pad((n%2)*30)}
-function find(id){for(var i=0;i<S.blocks.length;i++)if(S.blocks[i].id===id)return S.blocks[i];return null}
+function find(id){for(var i=0;i<T().blocks.length;i++)if(T().blocks[i].id===id)return T().blocks[i];return null}
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]})}
 
+var tab=document.getElementById("tab"),ask=document.getElementById("ask"),
+    scrim2=document.getElementById("scrim2"),askt=document.getElementById("askt"),
+    askv=document.getElementById("askv"),onAsk=null;
+function dialog(title,val,cb){
+  askt.textContent=title;onAsk=cb;
+  if(val===null){askv.classList.add("off")}
+  else{askv.classList.remove("off");askv.value=val}
+  scrim2.classList.add("on");ask.classList.add("on");
+  if(val!==null)setTimeout(function(){askv.focus();askv.select()},260);
+}
+function shut(){
+  onAsk=null;scrim2.classList.remove("on");ask.classList.remove("on");askv.blur();
+}
+document.getElementById("asko").addEventListener("click",function(){
+  var cb=onAsk,v=askv.classList.contains("off")?true:askv.value.trim();
+  shut();if(cb)cb(v);
+});
+document.getElementById("askc").addEventListener("click",shut);
+scrim2.addEventListener("click",shut);
+askv.addEventListener("keydown",function(e){
+  if(e.key==="Enter")document.getElementById("asko").click();
+});
+function tabs(){
+  var h="";
+  S.tabs.forEach(function(t){
+    h+="<option value='"+t.id+"'>"+esc(t.name)+"</option>";
+  });
+  tab.innerHTML=h;tab.value=S.cur;
+}
+function switchTo(id){
+  S.cur=id;cur=null;
+  scrim.classList.remove("on");sheet.classList.remove("on");
+  save();tabs();opts();grid();
+}
+tab.addEventListener("change",function(){switchTo(tab.value)});
+document.getElementById("tnew").addEventListener("click",function(){
+  var d="시간표 "+(S.tabs.length+1);
+  dialog("새 시간표 이름",d,function(n){
+    var t=blank(n||d);S.tabs.push(t);switchTo(t.id);
+  });
+});
+document.getElementById("tren").addEventListener("click",function(){
+  var t=T();
+  dialog("시간표 이름",t.name,function(n){
+    if(!n)return;t.name=n;save();tabs();
+  });
+});
+document.getElementById("tdup").addEventListener("click",function(){
+  var t=T();
+  dialog("복제본 이름",t.name+" 복사본",function(n){dup(t,n)});
+});
+function dup(t,n){
+  var map={},nt=blank(n||t.name+" 복사본");
+  nt.h0=t.h0;nt.h1=t.h1;
+  nt.blocks=t.blocks.map(function(b){
+    if(!map[b.g])map[b.g]="g"+(++S.seq);
+    return {id:"b"+(++S.seq),g:map[b.g],d:b.d,s:b.s,e:b.e,n:b.n,c:b.c};
+  });
+  S.tabs.push(nt);switchTo(nt.id);
+}
+document.getElementById("tdel").addEventListener("click",function(){
+  var t=T();
+  if(S.tabs.length<2){dialog("마지막 시간표는 지울 수 없습니다",null,null);return}
+  dialog("'"+t.name+"' 시간표를 지울까요?",null,function(){
+    S.tabs=S.tabs.filter(function(x){return x.id!==t.id});
+    switchTo(S.tabs[0].id);
+  });
+});
 function head(){
   document.getElementById("days").innerHTML="<b></b>"+DAYS.map(function(d,i){
     return "<b"+(i>4?" class='we'":"")+">"+d+"</b>"}).join("");
@@ -197,7 +313,7 @@ function opts(){
   var a="",b="";
   for(var i=0;i<=12;i++)a+="<option value='"+i+"'>"+i+"시</option>";
   for(var j=13;j<=24;j++)b+="<option value='"+j+"'>"+j+"시</option>";
-  h0.innerHTML=a;h1.innerHTML=b;h0.value=S.h0;h1.value=S.h1;
+  h0.innerHTML=a;h1.innerHTML=b;h0.value=T().h0;h1.value=T().h1;
 }
 function grid(){
   N=slots();
@@ -206,9 +322,9 @@ function grid(){
   for(var i=1;i<N;i++)g+="<div class='hl"+(i%2?" half":"")+"' style='top:"+(i*SLOT)+"px'></div>";
   for(var d=1;d<7;d++)g+="<div class='vl' style='left:"+(d*100/7)+"%'></div>";
   lines.innerHTML=g;
-  for(var j=0;j<=N;j+=2)t+="<span style='top:"+(j*SLOT)+"px'>"+(S.h0+j/2)+"</span>";
+  for(var j=0;j<=N;j+=2)t+="<span style='top:"+(j*SLOT)+"px'>"+(T().h0+j/2)+"</span>";
   gut.innerHTML=t;
-  S.blocks.forEach(function(b){b.s=clamp(b.s,0,N-1);b.e=clamp(b.e,b.s+1,N)});
+  T().blocks.forEach(function(b){b.s=clamp(b.s,0,N-1);b.e=clamp(b.e,b.s+1,N)});
   paint();
 }
 function box(d,s,e){
@@ -216,7 +332,7 @@ function box(d,s,e){
 }
 function paint(){
   var h="";
-  S.blocks.forEach(function(b){
+  T().blocks.forEach(function(b){
     var n=b.e-b.s,px=n*SLOT,live=drag&&drag.id===b.id;
     h+="<div class='blk c"+b.c+(cur===b.id?" on":"")+(live?" lift":"")+"' data-id='"+b.id+"' style='"+box(b.d,b.s,b.e)+"'>"+
        esc(b.n||"이름 없음")+
@@ -229,8 +345,8 @@ function paint(){
   }
   layer.innerHTML=h;
   free();tally();
-  cnt.textContent=S.blocks.length?S.blocks.length+"개":"";
-  hint.innerHTML=S.blocks.length
+  cnt.textContent=T().blocks.length?T().blocks.length+"개":"";
+  hint.innerHTML=T().blocks.length
     ?"블록을 꾹 누른 채 끌면 옮겨지고, 아래 손잡이를 끌면 길이가 바뀝니다. 짧게 누르면 편집창에서 이름·색·복사를 다룰 수 있습니다."
     :"빈 칸을 꾹 누른 채 위아래로 끌어 첫 블록을 만드세요. 그냥 쓸어넘기면 화면이 스크롤됩니다.";
 }
@@ -238,7 +354,7 @@ function paint(){
 function free(){
   var used=[],i,d;
   for(d=0;d<7;d++){used[d]=[];for(i=0;i<N;i++)used[d][i]=false}
-  S.blocks.forEach(function(b){
+  T().blocks.forEach(function(b){
     for(var i=Math.max(0,b.s);i<Math.min(N,b.e);i++)used[b.d][i]=true;
   });
   var h="<span class='k'>남음</span>";
@@ -250,7 +366,7 @@ function free(){
 }
 function tally(){
   var t=[],i;for(i=0;i<9;i++)t[i]=0;
-  S.blocks.forEach(function(b){
+  T().blocks.forEach(function(b){
     t[b.c]+=Math.max(0,Math.min(N,b.e)-Math.max(0,b.s));
   });
   var on=[],h="";
@@ -320,7 +436,7 @@ area.addEventListener("pointermove",function(e){
     else if(drag.mode==="move"){
       b=find(drag.id);if(!b)return;
       b.s=clamp(p.i-drag.off,0,N-drag.len);b.e=b.s+drag.len;
-      if(!S.blocks.some(function(x){return x.g===b.g&&x.id!==b.id&&x.d===p.d}))b.d=p.d;
+      if(!T().blocks.some(function(x){return x.g===b.g&&x.id!==b.id&&x.d===p.d}))b.d=p.d;
       sync(b,function(x){x.s=b.s;x.e=b.e});
     }else{
       b=find(drag.id);if(!b)return;
@@ -357,7 +473,7 @@ function end(){
   if(d.mode==="new"){
     var s0=Math.min(d.a,d.b),z=Math.max(d.a,d.b)+1;
     var id="b"+(++S.seq),nb={id:id,g:id,d:d.d,s:s0,e:z,n:"",c:lastColor};
-    S.blocks.push(nb);save();open(nb.id,true);
+    T().blocks.push(nb);save();open(nb.id,true);
   }else{save();paint()}
 }
 area.addEventListener("pointerup",end);
@@ -399,11 +515,11 @@ document.getElementById("dayp").addEventListener("click",function(e){
   fam.forEach(function(x){if(x.d===d)sib=x});
   if(sib){
     if(fam.length<2)return;
-    S.blocks=S.blocks.filter(function(x){return x!==sib});
-    if(sib.id===cur){var rest=S.blocks.filter(function(x){return x.g===b.g})[0];cur=rest?rest.id:null}
+    T().blocks=T().blocks.filter(function(x){return x!==sib});
+    if(sib.id===cur){var rest=T().blocks.filter(function(x){return x.g===b.g})[0];cur=rest?rest.id:null}
   }else{
     var id="b"+(++S.seq);
-    S.blocks.push({id:id,g:b.g,d:d,s:b.s,e:b.e,n:b.n,c:b.c});
+    T().blocks.push({id:id,g:b.g,d:d,s:b.s,e:b.e,n:b.n,c:b.c});
   }
   save();refresh();paint();
 });
@@ -422,13 +538,13 @@ nm.addEventListener("keydown",function(e){if(e.key==="Enter")document.getElement
 document.getElementById("copy").addEventListener("click",function(){
   var b=find(cur);if(!b)return;
   var len=b.e-b.s,d=b.d,s=b.s,i;
-  for(i=1;i<7;i++){var nd=(d+i)%7;if(!S.blocks.some(function(x){return x.d===nd&&x.s<s+len&&x.e>s})){d=nd;break}}
+  for(i=1;i<7;i++){var nd=(d+i)%7;if(!T().blocks.some(function(x){return x.d===nd&&x.s<s+len&&x.e>s})){d=nd;break}}
   var id="b"+(++S.seq),nb={id:id,g:id,d:d,s:s,e:s+len,n:b.n,c:b.c};
-  S.blocks.push(nb);save();open(nb.id,false);
+  T().blocks.push(nb);save();open(nb.id,false);
 });
 document.getElementById("del").addEventListener("click",function(){
   var b=find(cur);
-  S.blocks=b?S.blocks.filter(function(x){return x.g!==b.g}):S.blocks;
+  T().blocks=b?T().blocks.filter(function(x){return x.g!==b.g}):T().blocks;
   save();close();
 });
 document.getElementById("done").addEventListener("click",function(){
@@ -438,17 +554,17 @@ document.getElementById("done").addEventListener("click",function(){
 });
 scrim.addEventListener("click",function(){
   var b=find(cur);
-  if(b&&!nm.value.trim())S.blocks=S.blocks.filter(function(x){return x.g!==b.g});
+  if(b&&!nm.value.trim())T().blocks=T().blocks.filter(function(x){return x.g!==b.g});
   close();
 });
 h0.addEventListener("change",function(){
-  S.h0=+h0.value;if(S.h1<=S.h0){S.h1=S.h0+2;h1.value=S.h1}save();grid();
+  T().h0=+h0.value;if(T().h1<=T().h0){T().h1=T().h0+2;h1.value=T().h1}save();grid();
 });
 h1.addEventListener("change",function(){
-  S.h1=+h1.value;if(S.h1<=S.h0){S.h0=S.h1-2;h0.value=S.h0}save();grid();
+  T().h1=+h1.value;if(T().h1<=T().h0){T().h0=T().h1-2;h0.value=T().h0}save();grid();
 });
 document.addEventListener("gesturestart",function(e){e.preventDefault()});
 
-load();head();opts();grid();
+load();head();tabs();opts();grid();
 })();
 </script></body></html>
