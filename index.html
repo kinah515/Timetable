@@ -79,6 +79,7 @@ select{background:var(--card);border:1px solid var(--rule-2);border-radius:8px;p
 .chips{display:flex;gap:9px;margin:13px 0 13px}
 .chip{width:34px;height:34px;border-radius:50%;border:1px solid var(--rule-2);padding:0}
 .chip[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--card),0 0 0 2px var(--mark)}
+.lbl{margin:0 2px 7px;font-size:12px;color:var(--ink-3)}
 .dayp{display:flex;gap:6px;margin-bottom:13px}
 .dayp button{flex:1;height:34px;border-radius:8px;border:1px solid var(--rule-2);background:var(--paper);font-size:13px;padding:0}
 .dayp button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
@@ -127,6 +128,7 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--mark);outline-
     <input id="nm" type="text" placeholder="수학, 알바, 운동" enterkeyhint="done" autocomplete="off">
     <p id="err" role="alert"></p>
     <div class="chips" id="chips"></div>
+    <p class="lbl">요일 · 여러 개 고르면 같은 시간에 함께 만들어집니다</p>
     <div class="dayp" id="dayp"></div>
     <div class="rows">
       <div class="row"><em>시작</em><b id="ts"></b>
@@ -145,7 +147,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--mark);outline-
 var DAYS=["월","화","수","목","금","토","일"],SLOT=22,KEY="timetable.v1",HOLD=320,TOL=8;
 var S={h0:8,h1:22,seq:0,blocks:[]},mem=null;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){mem=S}}
-function load(){try{var r=localStorage.getItem(KEY);if(r)S=JSON.parse(r)}catch(e){if(mem)S=mem}}
+function load(){
+  try{var r=localStorage.getItem(KEY);if(r)S=JSON.parse(r)}catch(e){if(mem)S=mem}
+  S.blocks.forEach(function(b){if(!b.g)b.g=b.id});
+}
+function kin(b){return S.blocks.filter(function(x){return x.g===b.g})}
+function sync(b,fn){kin(b).forEach(fn)}
 
 var area=document.getElementById("area"),lines=document.getElementById("lines"),
     layer=document.getElementById("blocks"),gut=document.getElementById("gut"),
@@ -241,10 +248,19 @@ function startEdge(){if(!edge)edge=setInterval(function(){
   if(dy)window.scrollBy(0,dy);
 },16)}
 function stopEdge(){if(edge){clearInterval(edge);edge=null}}
+var glideOn=false;
 function glide(v){
-  var y=v;(function step(){
-    if(Math.abs(y)<0.4)return;
-    window.scrollBy(0,y);y*=0.94;requestAnimationFrame(step);
+  glideOn=false;
+  if(!isFinite(v))return;
+  var y=Math.max(-42,Math.min(42,v));
+  if(Math.abs(y)<2)return;
+  glideOn=true;
+  (function step(){
+    if(!glideOn||Math.abs(y)<0.5){glideOn=false;return}
+    var before=window.pageYOffset;
+    window.scrollBy(0,y);
+    if(window.pageYOffset===before){glideOn=false;return}
+    y*=0.93;requestAnimationFrame(step);
   })();
 }
 area.addEventListener("pointerdown",function(e){
@@ -252,7 +268,7 @@ area.addEventListener("pointerdown",function(e){
   var el=e.target.closest(".blk");
   press={x:e.clientX,y:e.clientY,id:e.pointerId,el:el,
          grip:!!(e.target.classList&&e.target.classList.contains("grip"))};
-  lastY=e.clientY;sc=null;
+  lastY=e.clientY;sc=null;glideOn=false;
   press.timer=setTimeout(begin,HOLD);
 });
 area.addEventListener("pointermove",function(e){
@@ -262,16 +278,21 @@ area.addEventListener("pointermove",function(e){
     if(drag.mode==="new"){drag.b=p.i}
     else if(drag.mode==="move"){
       b=find(drag.id);if(!b)return;
-      b.s=clamp(p.i-drag.off,0,N-drag.len);b.e=b.s+drag.len;b.d=p.d;
+      b.s=clamp(p.i-drag.off,0,N-drag.len);b.e=b.s+drag.len;
+      if(!S.blocks.some(function(x){return x.g===b.g&&x.id!==b.id&&x.d===p.d}))b.d=p.d;
+      sync(b,function(x){x.s=b.s;x.e=b.e});
     }else{
       b=find(drag.id);if(!b)return;
       b.e=clamp(p.i+1,b.s+1,N);
+      sync(b,function(x){x.e=b.e});
     }
     paint();return;
   }
   if(sc){
     var t=Date.now(),d=sc.y-e.clientY,dt=t-sc.t;
-    sc.y=e.clientY;sc.t=t;sc.v=dt>0?d/dt*16:0;
+    sc.y=e.clientY;sc.t=t;
+    if(dt>90)sc.v=0;
+    else{var v=d/Math.max(dt,10)*16;sc.v=sc.v*0.6+Math.max(-42,Math.min(42,v))*0.4}
     window.scrollBy(0,d);return;
   }
   if(press&&press.timer&&(Math.abs(e.clientX-press.x)>TOL||Math.abs(e.clientY-press.y)>TOL)){
@@ -294,7 +315,7 @@ function end(){
   var d=drag;drag=null;
   if(d.mode==="new"){
     var s0=Math.min(d.a,d.b),z=Math.max(d.a,d.b)+1;
-    var nb={id:"b"+(++S.seq),d:d.d,s:s0,e:z,n:"",c:lastColor};
+    var id="b"+(++S.seq),nb={id:id,g:id,d:d.d,s:s0,e:z,n:"",c:lastColor};
     S.blocks.push(nb);save();open(nb.id,true);
   }else{save();paint()}
 }
@@ -311,13 +332,14 @@ function open(id,focus){
 function refresh(){
   var b=find(cur);if(!b)return;
   ts.textContent=label(b.s);te.textContent=label(b.e);
-  dur.textContent=DAYS[b.d]+"요일 · "+span(b.e-b.s);
+  var on=kin(b).map(function(x){return x.d}).sort(function(p,q){return p-q});
+  dur.textContent=on.map(function(i){return DAYS[i]}).join("·")+" · "+span(b.e-b.s);
   var ds=document.getElementById("dayp").children;
-  for(var i=0;i<ds.length;i++)ds[i].setAttribute("aria-pressed",i===b.d?"true":"false");
+  for(var i=0;i<ds.length;i++)ds[i].setAttribute("aria-pressed",on.indexOf(i)>=0?"true":"false");
 }
 function close(){
   var b=find(cur);
-  if(b&&!b.n.trim())b.n=nm.value.trim();
+  if(b&&!b.n.trim())sync(b,function(x){x.n=nm.value.trim()});
   cur=null;save();paint();
   scrim.classList.remove("on");sheet.classList.remove("on");nm.blur();
 }
@@ -328,32 +350,45 @@ function chips(){
 }
 document.getElementById("chips").addEventListener("click",function(e){
   var t=e.target.closest(".chip"),b=find(cur);if(!t||!b)return;
-  b.c=lastColor=+t.dataset.c;save();chips();paint();
+  lastColor=+t.dataset.c;sync(b,function(x){x.c=lastColor});save();chips();paint();
 });
 document.getElementById("dayp").addEventListener("click",function(e){
   var t=e.target.closest("button"),b=find(cur);if(!t||!b)return;
-  b.d=+t.dataset.d;save();refresh();paint();
+  var d=+t.dataset.d,fam=kin(b),sib=null;
+  fam.forEach(function(x){if(x.d===d)sib=x});
+  if(sib){
+    if(fam.length<2)return;
+    S.blocks=S.blocks.filter(function(x){return x!==sib});
+    if(sib.id===cur){var rest=S.blocks.filter(function(x){return x.g===b.g})[0];cur=rest?rest.id:null}
+  }else{
+    var id="b"+(++S.seq);
+    S.blocks.push({id:id,g:b.g,d:d,s:b.s,e:b.e,n:b.n,c:b.c});
+  }
+  save();refresh();paint();
 });
 document.querySelector(".rows").addEventListener("click",function(e){
   var t=e.target.closest("button"),b=find(cur);if(!t||!b)return;
   var v=+t.dataset.v;
   if(t.dataset.k==="s"){var s=clamp(b.s+v,0,b.e-1);b.e=clamp(b.e+(s-b.s),s+1,N);b.s=s}
   else{b.e=clamp(b.e+v,b.s+1,N)}
+  sync(b,function(x){x.s=b.s;x.e=b.e});
   save();refresh();paint();
 });
 nm.addEventListener("input",function(){
-  var b=find(cur);if(!b)return;b.n=nm.value;err.textContent="";save();paint();
+  var b=find(cur);if(!b)return;sync(b,function(x){x.n=nm.value});err.textContent="";save();paint();
 });
 nm.addEventListener("keydown",function(e){if(e.key==="Enter")document.getElementById("done").click()});
 document.getElementById("copy").addEventListener("click",function(){
   var b=find(cur);if(!b)return;
   var len=b.e-b.s,d=b.d,s=b.s,i;
   for(i=1;i<7;i++){var nd=(d+i)%7;if(!S.blocks.some(function(x){return x.d===nd&&x.s<s+len&&x.e>s})){d=nd;break}}
-  var nb={id:"b"+(++S.seq),d:d,s:s,e:s+len,n:b.n,c:b.c};
+  var id="b"+(++S.seq),nb={id:id,g:id,d:d,s:s,e:s+len,n:b.n,c:b.c};
   S.blocks.push(nb);save();open(nb.id,false);
 });
 document.getElementById("del").addEventListener("click",function(){
-  S.blocks=S.blocks.filter(function(x){return x.id!==cur});save();close();
+  var b=find(cur);
+  S.blocks=b?S.blocks.filter(function(x){return x.g!==b.g}):S.blocks;
+  save();close();
 });
 document.getElementById("done").addEventListener("click",function(){
   var b=find(cur);if(!b)return;
@@ -362,7 +397,7 @@ document.getElementById("done").addEventListener("click",function(){
 });
 scrim.addEventListener("click",function(){
   var b=find(cur);
-  if(b&&!nm.value.trim())S.blocks=S.blocks.filter(function(x){return x.id!==cur});
+  if(b&&!nm.value.trim())S.blocks=S.blocks.filter(function(x){return x.g!==b.g});
   close();
 });
 h0.addEventListener("change",function(){
